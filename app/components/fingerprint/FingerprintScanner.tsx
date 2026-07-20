@@ -2,8 +2,8 @@
 "use client";
 
 import { useEffect } from "react";
-import { useDigitalPersonaReader } from "@/hooks/useDigitalPersonaReader";
-import type { CapturedSample } from "@/lib/digitalpersona/client";
+import { useDigitalPersonaReader } from "@/app/hooks/useDigitalPersonaReader";
+import type { CapturedSample } from "@/app/lib/digitalpersona/client";
 
 interface FingerprintScannerProps {
   /** Fired once a usable sample is captured. */
