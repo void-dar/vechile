@@ -1,0 +1,105 @@
+// prisma/schema.prisma
+// Stack: Prisma + PostgreSQL (swap provider if needed) + Next.js API routes
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum FingerScanStatus {
+  ENROLLED
+  REVOKED
+}
+
+enum IgnitionResult {
+  SUCCESS
+  NO_MATCH
+  LOCKED_OUT
+  DEVICE_ERROR
+  LOW_QUALITY_SCAN
+}
+
+model User {
+  id            String          @id @default(cuid())
+  fullName      String
+  email         String          @unique
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  vehicles      VehicleAccess[]
+  fingerprints  Fingerprint[]
+  ignitionLogs  IgnitionLog[]
+}
+
+model Vehicle {
+  id            String          @id @default(cuid())
+  name          String          // e.g. "Praise's Civic"
+  vin           String          @unique
+  plateNumber   String?
+  createdAt     DateTime        @default(now())
+
+  authorizedUsers VehicleAccess[]
+  ignitionLogs    IgnitionLog[]
+}
+
+// Join table: which users may start which vehicle, and with which finger
+model VehicleAccess {
+  id          String   @id @default(cuid())
+  userId      String
+  vehicleId   String
+  isOwner     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, vehicleId])
+}
+
+// One row per enrolled finger. A user can enroll more than one finger
+// (e.g. left + right index) for redundancy.
+model Fingerprint {
+  id            String            @id @default(cuid())
+  userId        String
+  finger        String            // e.g. "RIGHT_INDEX", "LEFT_THUMB"
+  label         String?           // user-friendly nickname, e.g. "Backup finger"
+
+  // We never store a raw/reconstructible image. DigitalPersona's SDK gives us
+  // a proprietary FMD (Fingerprint Minutiae Data) template — store that,
+  // encrypted at rest, base64-encoded.
+  templateData  String            @db.Text
+  templateFormat String           @default("ISO_19794_2") // FMD format used for capture/compare
+  quality       Int               // capture quality score reported by the reader (0-100)
+
+  status        FingerScanStatus  @default(ENROLLED)
+  deviceId      String?           // serial/uid of the DigitalPersona reader used to enroll
+  createdAt     DateTime          @default(now())
+  revokedAt     DateTime?
+
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ignitionLogs  IgnitionLog[]
+
+  @@index([userId])
+}
+
+// Audit trail for every ignition attempt, matched or not.
+model IgnitionLog {
+  id             String          @id @default(cuid())
+  vehicleId      String
+  userId         String?         // null if no match was found
+  fingerprintId  String?         // which enrolled template matched, if any
+  result         IgnitionResult
+  matchScore     Int?            // similarity/confidence score returned by the matcher
+  attemptedAt    DateTime        @default(now())
+  deviceId       String?
+
+  vehicle        Vehicle         @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  user           User?           @relation(fields: [userId], references: [id])
+  fingerprint    Fingerprint?    @relation(fields: [fingerprintId], references: [id])
+
+  @@index([vehicleId, attemptedAt])
+}
