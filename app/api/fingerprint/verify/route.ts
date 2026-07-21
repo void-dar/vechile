@@ -6,10 +6,9 @@
 // ignition sequence.
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from '@/app/api/prisma'
 import { decryptTemplate } from "@/app/lib/crypto";
 import { matchFingerprint } from "@/app/lib/digitalpersona/matcher";
-
+import prisma from "@/app/api/prisma";
 
 interface VerifyBody {
   vehicleId: string;
@@ -80,7 +79,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const decryptedCandidates = candidates.map((c: { id: any; templateData: string; }) => ({
+    const decryptedCandidates = candidates.map((c) => ({
       fingerprintId: c.id,
       template: decryptTemplate(c.templateData),
     }));

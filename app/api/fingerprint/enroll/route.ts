@@ -1,7 +1,7 @@
+// app/api/fingerprint/enroll/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import prisma from '@/app/api/prisma'
 import { encryptTemplate } from "@/app/lib/crypto";
-
+import prisma from "@/app/api/prisma";
 
 interface EnrollBody {
   userId: string;

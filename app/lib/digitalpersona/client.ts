@@ -1,125 +1,123 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // lib/digitalpersona/client.ts
 //
-// IMPORTANT: @digitalpersona/websdk must NEVER be `import`ed here or
-// anywhere else in the app. It's a legacy UMD/AMD bundle whose internal
-// `define('WebSdkCore...', ['async', 'sjcl', 'BigInteger', 'SRPClient', ...], factory)`
-// call lists dependencies that only exist as globals, not as installable
-// npm packages — a bundler that tries to resolve them (Next.js/webpack does,
-// on a static `import`) fails with "Module not found: Can't resolve
-// 'BigInteger'" and similar. The library is designed to be loaded as a
-// plain <script> tag instead: with no AMD loader present, it falls back to
-// attaching itself directly to `window`. See components/vendor/
-// DigitalPersonaScripts.tsx for how it's loaded, and the README for how to
-// get the actual vendor file in place.
+// Uses @digitalpersona/devices' FingerprintReader, matched against its real
+// declaration files:
+//   - Device events (DeviceConnected/DeviceDisconnected) carry `deviceId`,
+//     NOT `deviceUid` — an earlier version of this file had that wrong.
+//   - SamplesAcquired.samples is a BioSample[] (from @digitalpersona/core),
+//     already parsed — not a JSON string needing JSON.parse(). BioSample's
+//     own field shape wasn't available while writing this; sample data is
+//     read defensively below (see the comment at CapturedSample) and should
+//     be confirmed against @digitalpersona/core's actual type if capture
+//     data comes through empty.
+//   - QualityReported.quality is a QualityCode enum (0 = Good, 1-24 = a
+//     specific named rejection reason), not a percentage — see
+//     lib/digitalpersona/quality.ts.
 //
-// This file only ever reads `window.Fingerprint` — it never imports the
-// package.
+// window.WebSdkCore (loaded via components/vendor/DigitalPersonaScripts.tsx
+// as a plain <script> tag) is still required — FingerprintReader's internal
+// channel depends on it.
 "use client";
 
-export type CaptureFormat = "PNG" | "ISO" | "Intermediate";
+import { FingerprintReader, SampleFormat } from "@digitalpersona/devices";
+import { QualityCode } from "./quality";
 
 export interface CapturedSample {
-  raw: string; // base64 sample data, format depends on CaptureFormat
-  format: CaptureFormat;
-}
-
-export interface ReaderDevice {
-  DeviceID: string;
-  DeviceTech: number;
+  /** Raw sample data pulled off the first BioSample in the event. Field name
+   *  is a best guess (.Data / .data / the sample object itself) since
+   *  BioSample's exact shape wasn't available — confirm against
+   *  @digitalpersona/core if this comes through empty during a real scan. */
+  raw: string;
+  format: "Intermediate";
 }
 
 type Listener<T> = (payload: T) => void;
 
-function getGlobalFingerprintSdk(): any {
-  const sdk = (window as any).Fingerprint;
-  if (!sdk) {
-    throw new Error(
-      "window.Fingerprint isn't defined yet. The DigitalPersona script hasn't " +
-        "loaded — check DigitalPersonaScripts is rendered in your root layout " +
-        "and that the vendor file exists at the path it points to."
-    );
-  }
-  return sdk;
-}
-
 export class DigitalPersonaClient {
-  private api: any | null = null;
+  private reader: FingerprintReader | null = null;
   private connected = false;
-  private currentDeviceUid: string | null = null;
+  private currentDeviceId: string | null = null;
 
   private onSampleListeners: Listener<CapturedSample>[] = [];
-  private onQualityListeners: Listener<number>[] = [];
-  private onDeviceListeners: Listener<{ connected: boolean; deviceUid?: string }>[] = [];
+  private onQualityListeners: Listener<QualityCode>[] = [];
+  private onDeviceListeners: Listener<{ connected: boolean; deviceId?: string }>[] = [];
   private onErrorListeners: Listener<string>[] = [];
 
-  /** Boots the SDK and wires up event handlers. Call once on mount, after
-   *  the vendor script has loaded (see useDigitalPersonaReader's retry loop). */
+  /** Call once on mount, after window.WebSdkCore exists (see the reader hook). */
   init() {
     if (typeof window === "undefined") return;
+    if (!(window as any).WebSdkCore) {
+      throw new Error(
+        "window.WebSdkCore isn't defined yet. The DigitalPersona transport script " +
+          "hasn't loaded — confirm DigitalPersonaScripts is rendered in your root layout."
+      );
+    }
 
-    const FPTypes = getGlobalFingerprintSdk();
-    this.api = new FPTypes.WebApi();
+    this.reader = new FingerprintReader();
 
-    this.api.onDeviceConnected = (event: { deviceUid: string }) => {
+    // Assigning to these properties (rather than .on()) lets TypeScript
+    // infer each handler's event type from the property's own declared
+    // type (Handler<DeviceConnected>, Handler<SamplesAcquired>, etc.).
+    this.reader.onDeviceConnected = (event) => {
       this.connected = true;
-      this.currentDeviceUid = event.deviceUid;
-      this.onDeviceListeners.forEach((cb) => cb({ connected: true, deviceUid: event.deviceUid }));
+      this.currentDeviceId = event.deviceId;
+      this.onDeviceListeners.forEach((cb) => cb({ connected: true, deviceId: event.deviceId }));
     };
 
-    this.api.onDeviceDisconnected = (event: { deviceUid: string }) => {
+    this.reader.onDeviceDisconnected = (event) => {
       this.connected = false;
-      this.onDeviceListeners.forEach((cb) => cb({ connected: false, deviceUid: event.deviceUid }));
+      this.onDeviceListeners.forEach((cb) => cb({ connected: false, deviceId: event.deviceId }));
     };
 
-    this.api.onCommunicationFailed = () => {
+    this.reader.onCommunicationFailed = () => {
       this.onErrorListeners.forEach((cb) =>
         cb("Lost connection to the DigitalPersona agent. Confirm it's running.")
       );
     };
 
-    this.api.onSamplesAcquired = (event: { samples: string; sampleFormat: number }) => {
-      // sampleFormat 1 = Raw/Intermediate, 2 = Compressed, 3 = PNG — see SDK docs.
-      const samples: string[] = JSON.parse(event.samples);
-      const sample = samples[0];
-      this.onSampleListeners.forEach((cb) =>
-        cb({ raw: sample, format: "Intermediate" })
-      );
+    this.reader.onSamplesAcquired = (event) => {
+      const bioSample = event.samples?.[0] as any;
+      if (!bioSample) return;
+      const raw = bioSample.Data ?? bioSample.data ?? bioSample;
+      this.onSampleListeners.forEach((cb) => cb({ raw, format: "Intermediate" }));
     };
 
-    this.api.onQualityReported = (event: { quality: number }) => {
-      this.onQualityListeners.forEach((cb) => cb(event.quality));
+    this.reader.onQualityReported = (event) => {
+      // event.quality is the package's own QualityCode enum — numerically
+      // identical to our local one (see lib/digitalpersona/quality.ts for
+      // why this file doesn't import the package's version directly).
+      this.onQualityListeners.forEach((cb) => cb(event.quality as unknown as QualityCode));
     };
 
-    this.api.onErrorOccurred = (event: { error: number }) => {
+    this.reader.onErrorOccurred = (event) => {
       this.onErrorListeners.forEach((cb) => cb(`Reader error code ${event.error}`));
     };
   }
 
-  async listDevices(): Promise<ReaderDevice[]> {
-    if (!this.api) throw new Error("DigitalPersonaClient not initialized");
-    return this.api.enumerateDevices();
+  async listDevices(): Promise<string[]> {
+    if (!this.reader) throw new Error("DigitalPersonaClient not initialized");
+    return this.reader.enumerateDevices();
   }
 
-  /** Starts continuous capture on the first available (or specified) reader. */
-  async startCapture(deviceUid?: string) {
-    if (!this.api) throw new Error("DigitalPersonaClient not initialized");
-    let uid = deviceUid;
-    if (!uid) {
+  /** Starts continuous acquisition on the first available (or specified) reader. */
+  async startCapture(deviceId?: string) {
+    if (!this.reader) throw new Error("DigitalPersonaClient not initialized");
+    let id = deviceId;
+    if (!id) {
       const devices = await this.listDevices();
       if (!devices.length) {
         throw new Error("No DigitalPersona 4500 reader detected. Plug it in and try again.");
       }
-      uid = devices[0].DeviceID;
+      id = devices[0];
     }
-    this.currentDeviceUid = uid;
-    const FPTypes = getGlobalFingerprintSdk();
-    await this.api.startAcquisition(FPTypes.SampleFormat.Intermediate, uid);
+    this.currentDeviceId = id;
+    await this.reader.startAcquisition(SampleFormat.Intermediate, id);
   }
 
   async stopCapture() {
-    if (!this.api || !this.currentDeviceUid) return;
-    await this.api.stopAcquisition(this.currentDeviceUid);
+    if (!this.reader) return;
+    await this.reader.stopAcquisition(this.currentDeviceId ?? undefined);
   }
 
   onSample(cb: Listener<CapturedSample>) {
@@ -127,12 +125,12 @@ export class DigitalPersonaClient {
     return () => this.removeListener(this.onSampleListeners, cb);
   }
 
-  onQuality(cb: Listener<number>) {
+  onQuality(cb: Listener<QualityCode>) {
     this.onQualityListeners.push(cb);
     return () => this.removeListener(this.onQualityListeners, cb);
   }
 
-  onDeviceChange(cb: Listener<{ connected: boolean; deviceUid?: string }>) {
+  onDeviceChange(cb: Listener<{ connected: boolean; deviceId?: string }>) {
     this.onDeviceListeners.push(cb);
     return () => this.removeListener(this.onDeviceListeners, cb);
   }

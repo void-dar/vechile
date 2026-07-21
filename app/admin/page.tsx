@@ -17,7 +17,7 @@ export default async function AdminPage() {
     <main className="min-h-screen bg-slate-950 px-4 py-12">
       <div className="mx-auto max-w-3xl">
         <h1 className="text-lg font-semibold text-slate-100">Fleet admin</h1>
-        <p className="mt-1 text-sm text-slate-500">Manage vehicles, drivers, and who's authorized on what.</p>
+        <p className="mt-1 text-sm text-slate-500">Manage vehicles, drivers, and whos authorized on what.</p>
         <AdminDashboard initialVehicles={vehicles} initialUsers={users} />
       </div>
     </main>

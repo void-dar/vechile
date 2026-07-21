@@ -15,6 +15,7 @@ interface FingerprintScannerProps {
 
 const STATUS_COPY: Record<string, string> = {
   idle: "Connecting to reader…",
+  sdk_loading: "Loading fingerprint driver…",
   no_device: "No DigitalPersona 4500 detected. Plug in the reader.",
   ready: "Place your finger on the scanner",
   capturing: "Scanning…",
@@ -23,7 +24,7 @@ const STATUS_COPY: Record<string, string> = {
 };
 
 export function FingerprintScanner({ onCapture, autoStart = true, instructions }: FingerprintScannerProps) {
-  const { status, quality, errorMessage, lastSample, startScan } = useDigitalPersonaReader();
+  const { status, qualityCode, errorMessage, lastSample, startScan } = useDigitalPersonaReader();
 
   useEffect(() => {
     if (autoStart && status === "ready") {
@@ -32,8 +33,8 @@ export function FingerprintScanner({ onCapture, autoStart = true, instructions }
   }, [autoStart, status, startScan]);
 
   useEffect(() => {
-    if (status === "sample_captured" && lastSample && quality !== null) {
-      onCapture(lastSample, quality);
+    if (status === "sample_captured" && lastSample && qualityCode !== null) {
+      onCapture(lastSample, qualityCode);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, lastSample]);
@@ -53,13 +54,13 @@ export function FingerprintScanner({ onCapture, autoStart = true, instructions }
         <p className="text-sm font-medium text-slate-200">
           {errorMessage ?? instructions ?? STATUS_COPY[status]}
         </p>
-        {quality !== null && status !== "error" && (
+        {qualityCode !== null && status !== "error" && (
           <div className="mt-2 h-1.5 w-40 overflow-hidden rounded-full bg-slate-800">
             <div
               className={`h-full rounded-full transition-all duration-300 ${
-                quality < 50 ? "bg-red-400" : quality < 75 ? "bg-amber-400" : "bg-emerald-400"
+                qualityCode < 50 ? "bg-red-400" : qualityCode < 75 ? "bg-amber-400" : "bg-emerald-400"
               }`}
-              style={{ width: `${quality}%` }}
+              style={{ width: `${qualityCode}%` }}
             />
           </div>
         )}
