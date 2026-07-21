@@ -1,17 +1,11 @@
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { DigitalPersonaScripts } from "@/app/components/vendor/DigitalPersonaScripts";
 import "./globals.css";
-
-const inter = Inter({ subsets: ["latin"] });
-
-export const metadata: Metadata = {
-  title: "PulseForm",
-};
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${inter.className} min-h-screen bg-slate-50 text-slate-900 antialiased`}>
+      <body className="bg-slate-950 text-slate-200 antialiased">
+        <DigitalPersonaScripts />
         {children}
       </body>
     </html>

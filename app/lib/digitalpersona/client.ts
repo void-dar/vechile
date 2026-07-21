@@ -1,15 +1,21 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // lib/digitalpersona/client.ts
 //
-// Thin wrapper around the DigitalPersona Web SDK ("@digitalpersona/websdk").
-// The SDK talks to DigitalPersona's local agent (installed alongside the
-// reader driver) over a websocket bridge and exposes a `Fingerprint.WebApi`
-// object once the script has loaded. We wrap it in a small class so the rest
-// of the app never touches `window.Fingerprint` directly.
+// IMPORTANT: @digitalpersona/websdk must NEVER be `import`ed here or
+// anywhere else in the app. It's a legacy UMD/AMD bundle whose internal
+// `define('WebSdkCore...', ['async', 'sjcl', 'BigInteger', 'SRPClient', ...], factory)`
+// call lists dependencies that only exist as globals, not as installable
+// npm packages — a bundler that tries to resolve them (Next.js/webpack does,
+// on a static `import`) fails with "Module not found: Can't resolve
+// 'BigInteger'" and similar. The library is designed to be loaded as a
+// plain <script> tag instead: with no AMD loader present, it falls back to
+// attaching itself directly to `window`. See components/vendor/
+// DigitalPersonaScripts.tsx for how it's loaded, and the README for how to
+// get the actual vendor file in place.
 //
-// Install: npm install @digitalpersona/websdk
+// This file only ever reads `window.Fingerprint` — it never imports the
+// package.
 "use client";
-
-import { Fingerprint as FPTypes } from "@digitalpersona/websdk";
 
 export type CaptureFormat = "PNG" | "ISO" | "Intermediate";
 
@@ -25,6 +31,18 @@ export interface ReaderDevice {
 
 type Listener<T> = (payload: T) => void;
 
+function getGlobalFingerprintSdk(): any {
+  const sdk = (window as any).Fingerprint;
+  if (!sdk) {
+    throw new Error(
+      "window.Fingerprint isn't defined yet. The DigitalPersona script hasn't " +
+        "loaded — check DigitalPersonaScripts is rendered in your root layout " +
+        "and that the vendor file exists at the path it points to."
+    );
+  }
+  return sdk;
+}
+
 export class DigitalPersonaClient {
   private api: any | null = null;
   private connected = false;
@@ -35,13 +53,13 @@ export class DigitalPersonaClient {
   private onDeviceListeners: Listener<{ connected: boolean; deviceUid?: string }>[] = [];
   private onErrorListeners: Listener<string>[] = [];
 
-  /** Boots the SDK and wires up event handlers. Call once on mount. */
+  /** Boots the SDK and wires up event handlers. Call once on mount, after
+   *  the vendor script has loaded (see useDigitalPersonaReader's retry loop). */
   init() {
     if (typeof window === "undefined") return;
 
-    // The websdk package attaches Fingerprint.WebApi to the module export.
-    // We instantiate our own WebApi instance so we can scope event handlers.
-    this.api = new (FPTypes as any).WebApi();
+    const FPTypes = getGlobalFingerprintSdk();
+    this.api = new FPTypes.WebApi();
 
     this.api.onDeviceConnected = (event: { deviceUid: string }) => {
       this.connected = true;
@@ -95,6 +113,7 @@ export class DigitalPersonaClient {
       uid = devices[0].DeviceID;
     }
     this.currentDeviceUid = uid;
+    const FPTypes = getGlobalFingerprintSdk();
     await this.api.startAcquisition(FPTypes.SampleFormat.Intermediate, uid);
   }
 
